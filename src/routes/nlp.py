@@ -1,4 +1,4 @@
-from fastapi import FastAPI,APIRouter,Depends,UploadFile,status,Request #as file have a spatial class in fast api
+from fastapi import FastAPI,APIRouter,Depends,UploadFile,status,Request,Query,HTTPException #as file have a spatial class in fast api
 from fastapi.responses import JSONResponse
 from .schemes.nlp import PushRequest , SearchRequest,SkillRequest,Skill_gap_Request
 from controllers import NLPController
@@ -11,7 +11,7 @@ from models.ChunkModel import ChunkModel
 import json 
 from typing import List
 from models.enums.AssetTypeEnum import AssetTypeEnum
-
+import requests
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -442,3 +442,109 @@ async def retun_ats_score_recommendtion(request:Request,project_id:str):
     chunk_data = await chunk_model.get_chunk(asset_record.id)
     
     return chunk_data.ats_score , chunk_data.answer_recommendetions
+
+
+
+APP_ID = "e58471d6"
+APP_KEY = "a610ceeedde21bbf7f86e4b1e33dd1c3"
+
+
+@nlp_router.post("/index/jops/{project_id}")
+async def get_jobs(
+    what: str = Query(default="developer"),
+    where: str = Query(default="London"),
+    country: str = Query(default="gb"),
+    page: int = Query(default=1)
+):
+
+    # validation
+    if not what and not where:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing search params"
+        )
+
+    try:
+
+        response = requests.get(
+            f"https://api.adzuna.com/v1/api/jobs/{country}/search/{page}",
+            params={
+                "app_id": APP_ID,
+                "app_key": APP_KEY,
+                "results_per_page": 10,
+                "what": what or "developer",
+                "where": where or "London"
+            }
+        )
+
+        data = response.json()
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "search": {
+                    "what": what,
+                    "where": where,
+                    "country": country
+                },
+                "page": page,
+                "results": len(data.get("results", [])),
+                "data": data.get("results", [])
+            }
+        )
+
+    except Exception as err:
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": str(err)
+            }
+        )
+
+
+# run:
+# uvicorn main:app --reload --port 5000
+
+@nlp_router.post("/index/run_all/{project_id}")
+async def run_all(
+    request: Request,
+    project_id: str,
+    skill_request: SkillRequest,
+    gap_request: Skill_gap_Request
+):
+
+    # 1. extract skills
+    answer_result = await answer_rag(
+        request=request,
+        project_id=project_id
+    )
+
+    # 2. return skills
+    skills_result = await retun_skills(
+        request=request,
+        project_id=project_id
+    )
+
+    # 3. skill gap
+    gap_result = await skill(
+        request=request,
+        project_id=project_id,
+        user_skill=skill_request
+    )
+
+    # 4. learning recommendation
+    learning_result = await learning_recommendtion(
+        request=request,
+        project_id=project_id,
+        user_gap_skill=gap_request
+    )
+
+    # 5. ats score
+    ats_result = await ats_score(
+        request=request,
+        project_id=project_id
+    )
+
