@@ -12,3 +12,7 @@ class SkillRequest(BaseModel):
 
 class Skill_gap_Request(BaseModel):
     user_gap_skill: List[str]
+
+class RunAllRequest(BaseModel):
+    skill_request: SkillRequest
+    gap_request: Skill_gap_Request

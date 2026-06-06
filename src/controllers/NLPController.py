@@ -166,7 +166,7 @@ class NLPController(BaseController):
         self.skills = s1['skills']
         self.test = "asd"
         return answer , full_prompt , chat_history
-    def skill_gap_system(self,request:Request,query:str,user_skill,role:str="AI engineer"):
+    def skill_gap_system(self,request:Request,query:str,user_skill,role:str):
         answer , full_prompt , chat_history = None , None , None
         prompt_1 = f""" 
 
@@ -240,7 +240,7 @@ class NLPController(BaseController):
     
 
     
-    def learning_recommendtion(self,request:Request,user_gap_skill,role:str="AI engineer"):
+    def learning_recommendtion(self,request:Request,user_gap_skill,role:str):
         prompt_3 = textwrap.dedent(f"""
         You are a Skill Gap Learning Advisor.
 

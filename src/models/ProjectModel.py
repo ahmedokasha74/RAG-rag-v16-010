@@ -26,14 +26,17 @@ class ProjectModel(BaseDataModel):
         return project # what if _id doesn't exist in result.inserted_id sol (get/create)
 
     async def  get_project_or_create_one(self,project_id:str):# let'ss use the scheme this function will take object from project(pydantic) to insert it
+        print("ENTER FUNCTION")
         record= await self.collection.find_one({
             "project_id":project_id # field named project_id with type project_id
         })
-
+        print("AFTER FIND_ONE")
+        print(record)
         if record is None:
             project=Project(project_id=project_id)#دا كله عشان اقوله خزن ال بروجكت اى دى بس تبع ال scheme 
             project=await self.create_project(project=project)
             return project
+        print("BEFORE PYDANTIC")
         return Project(**record)#record is dict but i need it to be from project type
         #don't use get_all without paggination # like in google split all 100 search result in 10 pages 
     async def get_all_projects(self, page: int=1, page_size: int=10):#number of pages and page_size    

@@ -1,6 +1,6 @@
 from fastapi import FastAPI,APIRouter,Depends,UploadFile,status,Request,Query,HTTPException #as file have a spatial class in fast api
 from fastapi.responses import JSONResponse
-from .schemes.nlp import PushRequest , SearchRequest,SkillRequest,Skill_gap_Request
+from .schemes.nlp import PushRequest , SearchRequest,SkillRequest,Skill_gap_Request,RunAllRequest
 from controllers import NLPController
 import logging
 from models import ResponseSignal
@@ -226,15 +226,6 @@ async def skill(request:Request,project_id:str,user_skill:SkillRequest):
         embedding_client = request.app.embedding_client,
         template_parser = request.app.template_parser,
     )
-    
-    answer , full_prompt , chat_history,mnmn = nlp_controller.skill_gap_system(
-        request=request,
-        query="skill_gap",
-        user_skill=user_skill.user_skill,
-        role="AI engineer"
-    )
-
-
     project_model = await ProjectModel.create_instance(# object from ProjectModel
         db_client=request.app.db_client
     )
@@ -242,6 +233,15 @@ async def skill(request:Request,project_id:str,user_skill:SkillRequest):
     project = await project_model.get_project_or_create_one(
             project_id=project_id # function  from object
     )
+    answer , full_prompt , chat_history,mnmn = nlp_controller.skill_gap_system(
+        request=request,
+        query="skill_gap",
+        user_skill=user_skill,
+        role=project.role
+    )
+
+
+    
     asset_model=await AssetModel.create_instance(
         db_client=request.app.db_client)
     project_file_ids={}
@@ -308,14 +308,6 @@ async def learning_recommendtion(request:Request,project_id:str,user_gap_skill:S
         embedding_client = request.app.embedding_client,
         template_parser = request.app.template_parser,
     )
-    
-    answer = nlp_controller.learning_recommendtion(
-        request=request,
-        user_gap_skill=user_gap_skill.user_gap_skill,
-        role="AI engineer"
-    )
-    
-
     project_model = await ProjectModel.create_instance(# object from ProjectModel
         db_client=request.app.db_client
     )
@@ -323,6 +315,14 @@ async def learning_recommendtion(request:Request,project_id:str,user_gap_skill:S
     project = await project_model.get_project_or_create_one(
             project_id=project_id # function  from object
     )
+    answer = nlp_controller.learning_recommendtion(
+        request=request,
+        user_gap_skill=user_gap_skill,
+        role=project.role
+    )
+    
+
+    
     asset_model=await AssetModel.create_instance(
         db_client=request.app.db_client)
     project_file_ids={}
@@ -512,9 +512,10 @@ async def get_jobs(
 async def run_all(
     request: Request,
     project_id: str,
-    skill_request: SkillRequest,
-    gap_request: Skill_gap_Request
+    payload: RunAllRequest
 ):
+    skill_request = payload.skill_request
+    gap_request = payload.gap_request
 
     # 1. extract skills
     answer_result = await answer_rag(
@@ -528,18 +529,18 @@ async def run_all(
         project_id=project_id
     )
 
-    # 3. skill gap
+    # 3. skill gap analysis
     gap_result = await skill(
         request=request,
         project_id=project_id,
-        user_skill=skill_request
+        user_skill=skill_request.user_skill
     )
 
     # 4. learning recommendation
     learning_result = await learning_recommendtion(
         request=request,
         project_id=project_id,
-        user_gap_skill=gap_request
+        user_gap_skill=gap_request.user_gap_skill
     )
 
     # 5. ats score
@@ -547,4 +548,8 @@ async def run_all(
         request=request,
         project_id=project_id
     )
+
+
+
+
 

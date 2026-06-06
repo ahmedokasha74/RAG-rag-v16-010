@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routes import base,data,nlp
+from routes import base,data,nlp,auth
 from motor.motor_asyncio import AsyncIOMotorClient
 from fastapi.middleware.cors import CORSMiddleware 
 from helpers.config import get_settings
@@ -51,6 +51,7 @@ async def shutdown_span():
 app.include_router(base.base_router)
 app.include_router(data.data_router)
 app.include_router(nlp.nlp_router)
+app.include_router(auth.auth_router)
 
 
 

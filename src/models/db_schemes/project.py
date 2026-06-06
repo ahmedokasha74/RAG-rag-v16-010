@@ -5,6 +5,9 @@ from bson.objectid import ObjectId
 class Project(BaseModel):
     id: Optional[ObjectId] = Field(None, alias="_id")# _ refer that the object is private sol : make alies
     project_id: str = Field(..., min_length=1)
+    email:str = Field(..., min_length=1)
+    password:str = Field(..., min_length=1)
+    role:str = Field(..., min_length=1)
 
     @validator('project_id')
     def validate_project_id(cls, value):
