@@ -32,6 +32,27 @@ class settings(BaseSettings):
     DEFAULT_LANG : str = "en"
     GROQ_API_KEY: str = None
     
+    # Google Calendar OAuth Configuration
+    GOOGLE_CALENDAR_API_URL: str | None = None
+    GOOGLE_CALENDAR_CLIENT_SECRETS_FILE: str | None = None
+    GOOGLE_CALENDAR_TOKEN_STORAGE_PATH: str | None = None
+    GOOGLE_CALENDAR_ID: str = "primary"
+    
+    # SMTP Email Configuration
+    EMAIL_SMTP_HOST: str | None = None
+    EMAIL_SMTP_PORT: int = 587
+    EMAIL_SMTP_USERNAME: str | None = None
+    EMAIL_SMTP_PASSWORD: str | None = None
+    EMAIL_FROM_ADDRESS: str | None = None
+
+    # Gmail Ingestion Configuration
+    GMAIL_INGESTION_ENABLED: bool = False
+    GMAIL_CLIENT_SECRETS_FILE: str | None = None
+    GMAIL_TOKEN_STORAGE_PATH: str | None = None
+    GMAIL_POLL_INTERVAL_SECONDS: int = 30
+    GMAIL_LABEL_FILTER: str = "INBOX"
+    GMAIL_QUERY: str = "is:unread"
+
     class Config():# path of .env, any thing in ".env" will be loaded and i will able to use it(data configration for validation)
         env_file=".env"
 

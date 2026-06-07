@@ -1,0 +1,182 @@
+import logging
+from datetime import datetime
+from html import escape
+
+from models.enums.InterviewStatusEnum import InterviewStatusEnum
+from services.email_service import EmailService
+from ..interview_state import InterviewState
+
+logger = logging.getLogger(__name__)
+
+
+class SendEmailNode:
+    """Send the interview report to the candidate via Gmail SMTP."""
+
+    name = "send_email"
+
+    def __init__(self, settings):
+        self.settings = settings
+        self.email_service = None
+
+        if self.settings.EMAIL_SMTP_USERNAME and self.settings.EMAIL_SMTP_PASSWORD:
+            try:
+                self.email_service = EmailService(
+                    smtp_host=self.settings.EMAIL_SMTP_HOST or EmailService.GMAIL_SMTP_HOST,
+                    smtp_port=self.settings.EMAIL_SMTP_PORT,
+                    smtp_username=self.settings.EMAIL_SMTP_USERNAME,
+                    smtp_password=self.settings.EMAIL_SMTP_PASSWORD,
+                    from_address=self.settings.EMAIL_FROM_ADDRESS or self.settings.EMAIL_SMTP_USERNAME,
+                )
+            except Exception as exc:
+                logger.error("Failed to initialize EmailService: %s", exc)
+                self.email_service = None
+
+    def execute(self, state: InterviewState) -> InterviewState:
+        """Send interview report to the candidate."""
+        state.status = InterviewStatusEnum.SEND_EMAIL_REPORT.value
+
+        try:
+            recipient = state.candidate_email or state.from_email
+
+            if not self.email_service:
+                logger.warning(
+                    "EmailService unavailable; skipping email send for interview_id=%s",
+                    state.interview_id,
+                )
+                state.email_sent = False
+                state.email_sent_at = None
+                state.status = InterviewStatusEnum.COMPLETED.value
+                return state
+
+            subject = self._build_subject(state)
+            body = self._build_body(state)
+
+            logger.info(
+                "Sending interview report email: interview_id=%s, recipient=%s",
+                state.interview_id,
+                recipient,
+            )
+
+            success = self.email_service.send(
+                to_address=str(recipient),
+                subject=subject,
+                body=body,
+                html_body=self._build_html_body(state),
+            )
+
+            if success:
+                state.email_sent = True
+                state.email_sent_at = datetime.utcnow()
+                logger.info(
+                    "Interview report email sent successfully: interview_id=%s",
+                    state.interview_id,
+                )
+            else:
+                state.email_sent = False
+                state.email_sent_at = None
+                logger.warning(
+                    "Failed to send interview report email: interview_id=%s",
+                    state.interview_id,
+                )
+
+            state.status = InterviewStatusEnum.COMPLETED.value
+
+        except Exception as exc:
+            state.status = InterviewStatusEnum.FAILED.value
+            state.last_error = f"{self.name} failed: {exc}"
+            state.email_sent = False
+            state.email_sent_at = None
+            logger.error(state.last_error)
+
+        return state
+
+    def _build_subject(self, state: InterviewState) -> str:
+        return f"Interview Report: {state.decision} - {state.candidate_name or 'Candidate'}"
+
+    def _build_body(self, state: InterviewState) -> str:
+        report = state.report or {}
+
+        lines = [
+            f"Interview Report for {state.candidate_name or 'Candidate'}",
+            "=" * 60,
+            "",
+            f"Interview ID: {state.interview_id}",
+            f"Interview Date: {state.interview_datetime.strftime('%Y-%m-%d %H:%M') if state.interview_datetime else 'N/A'}",
+            "",
+            "RESULTS",
+            "-" * 60,
+            f"Overall Score: {report.get('overall_score', 'N/A')}/10",
+            f"Decision: {state.decision}",
+            "",
+            "STRENGTHS",
+            "-" * 60,
+        ]
+
+        for strength in report.get("strengths", []):
+            lines.append(f"- {strength}")
+
+        lines.extend([
+            "",
+            "AREAS FOR IMPROVEMENT",
+            "-" * 60,
+        ])
+
+        for weakness in report.get("weaknesses", []):
+            lines.append(f"- {weakness}")
+
+        lines.extend([
+            "",
+            "SUMMARY",
+            "-" * 60,
+            report.get("summary", "Interview completed."),
+            "",
+            "Best regards,",
+            "The Interview Team",
+        ])
+
+        return "\n".join(lines)
+
+    def _build_html_body(self, state: InterviewState) -> str:
+        report = state.report or {}
+        decision_colors = {"Strong Hire": "#2e7d32", "Hire": "#388e3c", "Hold": "#f57c00", "Reject": "#c62828"}
+        decision_color = decision_colors.get(state.decision, "#757575")
+
+        strengths_html = "".join(f"<li>{escape(str(strength))}</li>" for strength in report.get("strengths", []))
+        weaknesses_html = "".join(f"<li>{escape(str(weakness))}</li>" for weakness in report.get("weaknesses", []))
+        candidate_name = escape(state.candidate_name or "Candidate")
+        decision = escape(state.decision or "N/A")
+        score = escape(str(report.get("overall_score", "N/A")))
+        summary = escape(str(report.get("summary", "Interview completed.")))
+
+        return f"""
+        <html>
+            <body style="font-family: Arial, sans-serif;">
+                <h2>Interview Report</h2>
+                <p>Dear {candidate_name},</p>
+
+                <p>Thank you for participating in our interview process. Here is your interview report:</p>
+
+                <h3>Results</h3>
+                <ul>
+                    <li><strong>Overall Score:</strong> {score}/10</li>
+                    <li><strong>Decision:</strong> <span style="color: {decision_color}; font-weight: bold;">{decision}</span></li>
+                </ul>
+
+                <h3>Strengths</h3>
+                <ul>
+                    {strengths_html}
+                </ul>
+
+                <h3>Areas for Improvement</h3>
+                <ul>
+                    {weaknesses_html}
+                </ul>
+
+                <h3>Summary</h3>
+                <p>{summary}</p>
+
+                <hr>
+                <p>Best regards,<br>The Interview Team</p>
+            </body>
+        </html>
+        """

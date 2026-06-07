@@ -1,5 +1,10 @@
+import asyncio
+import logging
 from fastapi import FastAPI
-from routes import base,data,nlp,auth
+from routes import base,data,nlp,auth, interview, email_ingestion
+from services.gmail_ingestion_service import GmailIngestionService
+
+logger = logging.getLogger(__name__)
 from motor.motor_asyncio import AsyncIOMotorClient
 from fastapi.middleware.cors import CORSMiddleware 
 from helpers.config import get_settings
@@ -40,18 +45,43 @@ async def startup_span():
       language = settings.PRIMARY_LANG,
       default_language = settings.DEFAULT_LANG,
    )
+
+   app.gmail_ingestion_service = None
+   app.gmail_ingestion_task = None
+   if settings.GMAIL_INGESTION_ENABLED:
+      try:
+         app.gmail_ingestion_service = GmailIngestionService(
+            db_client=app.db_client,
+            settings=settings,
+         )
+         app.gmail_ingestion_task = asyncio.create_task(
+            app.gmail_ingestion_service.poll_forever()
+         )
+      except Exception as exc:
+         logger.error("Failed to start Gmail ingestion service: %s", exc)
+
 #Case A — 1 user uploads a file Only 1 connection is used at a time, but it is reused for multiple requests.
   
 @app.on_event("shutdown")#closes all connections when FastAPI shuts down.
 async def shutdown_span():
    app.mongo_conn.close()
    app.vectordb_client.disconnect()
+   
+   gmail_task = getattr(app, "gmail_ingestion_task", None)
+   if gmail_task is not None:
+      gmail_task.cancel()
+      try:
+         await gmail_task
+      except asyncio.CancelledError:
+         pass
 
 
 app.include_router(base.base_router)
 app.include_router(data.data_router)
 app.include_router(nlp.nlp_router)
 app.include_router(auth.auth_router)
+app.include_router(interview.interview_router)
+app.include_router(email_ingestion.email_ingestion_router)
 
 
 

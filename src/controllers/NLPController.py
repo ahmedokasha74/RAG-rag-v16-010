@@ -1,3 +1,5 @@
+import logging
+
 from .BaseController import BaseController
 # here iam trynig to control vectors db like reset and get info
 # i know that i made this frunctions in the provider but lets see why we call it again here
@@ -5,10 +7,12 @@ from models.db_schemes import project, DataChunk
 from stores.llm.LLMEnums import DocumentTypeEnum
 import json 
 from fastapi import Request
-from typing import List
+from typing import List, Dict, Any
 import ast
 import re
 import textwrap
+
+logger = logging.getLogger(__name__)
 
 class NLPController(BaseController):
     def __init__(self,vectordb_client,generation_client,embedding_client,template_parser):
@@ -179,29 +183,19 @@ class NLPController(BaseController):
                         - No explanations.
                         - No markdown.
                         """
-        system_prompt = self.template_parser.get("rag","system_prompt")
-        chat_history_1 = [self.generation_client.construct_prompt(
-            prompt = system_prompt,
-            role = self.generation_client.enums.SYSTEM.value # instate fo writing coher or open ai enum and i don't know which one is used 
-            )]
         
-        footer_prompt_1 = self.template_parser.get("rag","footer_prompt", {
-                    "query":prompt_1,
-                   
-            })
-        #skills = request.app.state.skills
-        #print(skills)
-        response_requierd_skills = self.generation_client.generate_text(
-            prompt = footer_prompt_1,# footer_prompt it was full_prompt
-            chat_history = chat_history_1
-        )
+        response_requierd_skills = self._call_llm_for_json(prompt_1)
 
         clean_skills = self.split_commas(self.extract_skills(user_skill))
-        cleaned = response_requierd_skills.replace("```python\n", "").replace("\n```", "")
+        cleaned = response_requierd_skills
+        start = cleaned.find('[')
+        end = cleaned.rfind(']')
+        if start != -1 and end != -1 and end > start:
+            cleaned = cleaned[start:end+1]
         cleaned_skills_list = ast.literal_eval(cleaned)
         skills_list = self.split_commas(self.extract_skills(cleaned_skills_list))
         gap = set(skills_list) - set(clean_skills)
-        full_prompt = "\n\n".join([footer_prompt_1])
+        full_prompt = prompt_1
         return gap , clean_skills , cleaned_skills_list , skills_list
     
     def split_commas(self,skills):
@@ -275,22 +269,8 @@ class NLPController(BaseController):
         Role: {role}
         Missing Skills: {user_gap_skill}
         """)
-        system_prompt = self.template_parser.get("rag","system_prompt")
-        chat_history_1 = [self.generation_client.construct_prompt(
-            prompt = system_prompt,
-            role = self.generation_client.enums.SYSTEM.value # instate fo writing coher or open ai enum and i don't know which one is used 
-            )]
-        
-        footer_prompt_1 = self.template_parser.get("rag","footer_prompt", {
-                    "query":prompt_3,
-                   
-            })
-        #skills = request.app.state.skills
-        #print(skills)
-        response_learning_recommendtion = self.generation_client.generate_text(
-            prompt = footer_prompt_1,# footer_prompt it was full_prompt
-            chat_history = chat_history_1
-        )
+
+        response_learning_recommendtion = self._call_llm_for_json(prompt_3)
         return response_learning_recommendtion
 
     def ats_score(self,asset_record,jd_text=None):
@@ -374,22 +354,8 @@ class NLPController(BaseController):
 
         Job Description Text:
         """ + jd_text
-        system_prompt = self.template_parser.get("rag","system_prompt")
-        chat_history_1 = [self.generation_client.construct_prompt(
-            prompt = system_prompt,
-            role = self.generation_client.enums.SYSTEM.value # instate fo writing coher or open ai enum and i don't know which one is used 
-            )]
-        
-        footer_prompt_1 = self.template_parser.get("rag","footer_prompt", {
-                    "query":prompt,
-                   
-            })
-        #skills = request.app.state.skills
-        #print(skills)
-        ats_response = self.generation_client.generate_text(
-            prompt = footer_prompt_1,# footer_prompt it was full_prompt
-            chat_history = chat_history_1
-        )
+
+        ats_response = self._call_llm_for_json(prompt)
         ats_response=self.parse_llm_json(ats_response)
 
         return ats_response["overall_ats_score"] , ats_response["priority_recommendations"]
@@ -400,23 +366,198 @@ class NLPController(BaseController):
         if not json_match:
             raise ValueError("No valid JSON found in model output")
         return json.loads(json_match.group())'''
-    def parse_llm_json(self,response: str):
+    def parse_llm_json(self,response: str) -> Any:
         # remove markdown
         response = response.replace("```json", "").replace("```", "").strip()
 
         # try direct parse first
         try:
             return json.loads(response)
-        except:
+        except Exception:
             pass
 
-        # fallback: extract first valid JSON object
-        matches = re.finditer(r'\{.*?\}', response, re.DOTALL)
+        # fallback: extract outermost JSON object using balanced braces
+        start = response.find('{')
+        if start != -1:
+            depth = 0
+            for i in range(start, len(response)):
+                if response[i] == '{':
+                    depth += 1
+                elif response[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(response[start:i+1])
+                        except Exception:
+                            break
 
-        for match in matches:
-            try:
-                return json.loads(match.group())
-            except:
-                continue
+        # fallback: try extracting a JSON array
+        start = response.find('[')
+        if start != -1:
+            depth = 0
+            for i in range(start, len(response)):
+                if response[i] == '[':
+                    depth += 1
+                elif response[i] == ']':
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(response[start:i+1])
+                        except Exception:
+                            break
 
         raise ValueError("No valid JSON found in model output")
+
+    def _call_llm_for_json(self, prompt: str) -> str:
+        """A helper method to call the LLM and expect a JSON-like response."""
+        system_prompt = "You are a helpful assistant that generates structured data, such as JSON or Python lists."
+        chat_history = [self.generation_client.construct_prompt(prompt=system_prompt, role=self.generation_client.enums.SYSTEM.value)]
+        footer_prompt = self.template_parser.get("rag", "footer_prompt", {"query": prompt})
+
+        return self.generation_client.generate_text(
+            prompt=footer_prompt,
+            chat_history=chat_history
+        )
+
+    def generate_interview_questions(self, context: str) -> List[str]:
+        """Generates dynamic interview questions using an LLM."""
+        prompt = textwrap.dedent(f"""
+            You are an expert hiring manager. Your task is to generate a list of 7 diverse interview questions based on the provided context.
+
+            Context: "{context}"
+
+            First, analyze the context to determine if it specifies a job role (e.g., "Backend Engineer", "Data Scientist").
+            - If a specific role is identified, generate role-specific questions.
+            - If the context is generic or a role cannot be determined, generate general behavioral and problem-solving questions suitable for any professional interview.
+
+            The questions should cover:
+            - Behavioral questions
+            - Technical questions (if a role is identified)
+            - Problem-solving or scenario-based questions
+
+            Rules:
+            - The difficulty should gradually increase.
+            - Return ONLY a valid JSON list of strings.
+            - Do not include numbering or introductory text.
+
+            Example format:
+            [
+                "Question 1",
+                "Question 2",
+                ...
+            ]
+        """)
+
+        response = self._call_llm_for_json(prompt)
+
+        try:
+            questions = self.parse_llm_json(response)
+            if isinstance(questions, list) and all(isinstance(q, str) for q in questions):
+                return questions
+            raise ValueError("LLM did not return a valid list of strings.")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"Failed to parse interview questions from LLM: {e}")
+            # Fallback to generic questions
+            return [
+                "Can you tell me about a challenging project you've worked on?",
+                "How do you handle tight deadlines and pressure?",
+                "What are your greatest strengths and weaknesses?",
+                "Describe a time you had a conflict with a team member and how you resolved it.",
+                "Where do you see yourself in five years?"
+            ]
+
+    def evaluate_interview(self, questions: List[str], answers: List[str]) -> Dict:
+        """Evaluates an interview Q&A using an LLM and provides a structured score."""
+        
+        interview_transcript = "\n\n".join([f"Question: {q}\nAnswer: {a}" for q, a in zip(questions, answers)])
+
+        prompt = textwrap.dedent(f"""
+            You are an expert technical recruiter and hiring manager.
+            Analyze the following interview transcript and provide a structured evaluation.
+
+            Transcript:
+            ---
+            {interview_transcript}
+            ---
+
+            Evaluation Criteria:
+            - Technical Knowledge: Accuracy and depth of technical answers.
+            - Problem Solving: Ability to break down problems and propose solutions.
+            - Communication: Clarity, conciseness, and professionalism.
+            - Relevance: How relevant the answers are to the questions.
+
+            Tasks:
+            1.  Provide a score from 1.0 to 10.0 for each of the four criteria.
+            2.  Calculate an `overall_score` (the average of the four scores).
+            3.  Identify 2-3 key `strengths`.
+            4.  Identify 1-2 key `weaknesses` or areas for improvement.
+            5.  Write a concise `feedback` summary (2-3 sentences).
+            6.  Make a final `decision` from one of these options: "Strong Hire", "Hire", "Hold", "Reject".
+
+            Return ONLY a single, strictly valid JSON object with the following schema. Do not add explanations.
+
+            {{
+                "scores": {{
+                    "technical_knowledge": float,
+                    "problem_solving": float,
+                    "communication": float,
+                    "relevance": float
+                }},
+                "overall_score": float,
+                "strengths": ["string"],
+                "weaknesses": ["string"],
+                "feedback": "string",
+                "decision": "string"
+            }}
+        """)
+
+        response = self._call_llm_for_json(prompt)
+
+        try:
+            evaluation = self.parse_llm_json(response)
+            # Basic validation
+            if "overall_score" in evaluation and "decision" in evaluation:
+                return evaluation
+            raise ValueError("LLM response is missing required evaluation fields.")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"Failed to parse interview evaluation from LLM: {e}")
+            return {
+                "scores": {}, "overall_score": 0.0, "strengths": [], "weaknesses": [],
+                "feedback": "Failed to evaluate interview due to an internal error.", "decision": "Reject"
+            }
+
+    def parse_interview_email(self, email_body: str, email_subject: str) -> Dict:
+        """Extracts structured interview details from an email using an LLM."""
+        from datetime import datetime
+        prompt = textwrap.dedent(f"""
+            You are an expert email parsing system. From the email content below, extract the following details.
+            The current UTC time is {datetime.utcnow().isoformat()}.
+
+            - candidate_name: The name of the candidate.
+            - interview_datetime: The full date and time of the interview in UTC ISO 8601 format (e.g., YYYY-MM-DDTHH:MM:SS).
+            - meeting_platform: The name of the video conference platform (e.g., "Google Meet", "Zoom", "Microsoft Teams").
+            - meeting_link: The full URL of the meeting link (e.g., a Zoom or Google Meet URL). Extract any URL that looks like a video conference link.
+            - job_title: The job title for the interview.
+
+            Email Subject: {email_subject}
+            Email Body:
+            ---
+            {email_body}
+            ---
+
+            Return ONLY a single, strictly valid JSON object. Use null for missing fields.
+            {{
+                "candidate_name": "string | null",
+                "interview_datetime": "string | null",
+                "meeting_platform": "string | null",
+                "meeting_link": "string | null",
+                "job_title": "string | null"
+            }}
+        """)
+
+        response = self._call_llm_for_json(prompt)
+        try:
+            return self.parse_llm_json(response)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"Failed to parse interview email details from LLM: {e}")
+            return {}

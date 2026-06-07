@@ -236,7 +236,7 @@ async def skill(request:Request,project_id:str,user_skill:SkillRequest):
     answer , full_prompt , chat_history,mnmn = nlp_controller.skill_gap_system(
         request=request,
         query="skill_gap",
-        user_skill=user_skill,
+        user_skill=user_skill.user_skill,
         role=project.role
     )
 
@@ -533,14 +533,14 @@ async def run_all(
     gap_result = await skill(
         request=request,
         project_id=project_id,
-        user_skill=skill_request.user_skill
+        user_skill=skill_request
     )
 
     # 4. learning recommendation
     learning_result = await learning_recommendtion(
         request=request,
         project_id=project_id,
-        user_gap_skill=gap_request.user_gap_skill
+        user_gap_skill=gap_request
     )
 
     # 5. ats score
